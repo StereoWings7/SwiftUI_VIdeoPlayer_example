@@ -190,7 +190,7 @@ class VideoMetadata {
     var lastPlayedAt: Date?           // Last playback timestamp
     var playbackPosition: TimeInterval // Current playback position (seconds)
     var tags: [String]                // Tags (UI not implemented)
-    var userRating: Int?              // 1-5 stars (UI not implemented)
+    var userRating: Int               // 1-5 stars (UI not implemented)
     var duration: TimeInterval        // Total video duration
 
     @Relationship(deleteRule: .nullify, inverse: \Playlist.videoMetadata)
@@ -216,12 +216,14 @@ class Playlist {
 }
 ```
 
+**Stored Properties:**
+- `videoCount: Int` - Count of videos (stored property, manually updated in `addVideo(_:)` and `removeVideo(_:)`)
+
 **Methods:**
-- `addVideo(_:)` - Adds video if not already present, updates timestamp
-- `removeVideo(_:)` - Removes video, updates timestamp
+- `addVideo(_:)` - Adds video if not already present, updates timestamp and videoCount
+- `removeVideo(_:)` - Removes video, updates timestamp and videoCount
 
 **Computed Properties:**
-- `videoCount: Int` - Count of videos
 - `totalDuration: TimeInterval` - Sum of all video durations
 - `formattedTotalDuration: String` - "H:MM:SS" format
 
@@ -229,6 +231,7 @@ class Playlist {
 - All relationship modifications update `updatedAt`
 - Delete rule `.nullify` prevents cascading deletes
 - Duration calculations handle edge cases (zero duration)
+- `videoCount` is a stored property, not computed; it is updated whenever videos are added or removed from the playlist
 
 ---
 
@@ -246,7 +249,6 @@ class Playlist {
 @State private var player: AVPlayer?
 @State private var isPlaying = false
 @State private var currentVideoMetadata: VideoMetadata?
-@State private var positionUpdateTimer: Timer?
 @State private var showingPlaylistView = false
 @State private var showingHistoryView = false
 ```
@@ -255,15 +257,10 @@ class Playlist {
 
 | Function | Purpose | Location (approx) |
 |----------|---------|------------------|
-| `loadVideo(from:)` | Async load video from PhotosPicker | Line ~60 |
-| `createOrUpdateVideoMetadata(for:)` | Create/update metadata with AVAsset | Line ~90 |
-| `updatePlaybackPosition()` | Save current playback position | Line ~130 |
-| `togglePlayPause()` | Play/pause control | Line ~150 |
-| `resetToBeginning()` | Seek to 00:00 | Line ~160 |
-| `toggleFavorite()` | Toggle favorite status | Line ~170 |
-| `startPositionUpdateTimer()` | Start 1-second position updates | Line ~180 |
-| `stopPositionUpdateTimer()` | Stop position updates | Line ~190 |
-| `setupVideoEndObserver()` | Observe AVPlayerItemDidPlayToEndTime | Line ~200 |
+| `loadVideo(from:)` | Async load video from PhotosPicker | Line ~165 |
+| `createOrUpdateVideoMetadata(for:)` | Create/update metadata with AVAsset | Line ~206 |
+| `updatePlaybackPosition()` | Save current playback position | Line ~239 |
+| `toggleFavorite()` | Toggle favorite status | Line ~234 |
 
 **Important Patterns:**
 ```swift
@@ -367,29 +364,31 @@ var sortedPlaylists: [Playlist] {
 
 **State Management:**
 ```swift
-@State private var selectedPlaylistIDs: Set<PersistentIdentifier>
+@State private var selectedPlaylists: Set<Playlist>
 @State private var showingCreatePlaylist = false
 @State private var newPlaylistName = ""
 
 // Initialize with already-selected playlists
 init(videoMetadata: VideoMetadata) {
     self.videoMetadata = videoMetadata
-    _selectedPlaylistIDs = State(initialValue: Set(videoMetadata.playlists.map(\.id)))
+    _selectedPlaylists = State(initialValue: Set(videoMetadata.playlists))
 }
 ```
 
 **Save Logic:**
 ```swift
 // Add to selected playlists
-for playlist in playlists where selectedPlaylistIDs.contains(playlist.id) {
-    if !playlist.videoMetadata.contains(where: { $0.id == videoMetadata.id }) {
-        playlist.addVideo(videoMetadata)
-    }
+for playlist in selectedPlaylists {
+    playlist.addVideo(videoMetadata)
 }
 
 // Remove from deselected playlists
-for playlist in playlists where !selectedPlaylistIDs.contains(playlist.id) {
-    if playlist.videoMetadata.contains(where: { $0.id == videoMetadata.id }) {
+for playlist in playlists {
+    if !selectedPlaylists.contains(playlist)
+        && playlist.videoMetadata.contains(where: {
+            $0.assetIdentifier == videoMetadata.assetIdentifier
+        })
+    {
         playlist.removeVideo(videoMetadata)
     }
 }
